@@ -1,23 +1,23 @@
 """
-run streamlit run vis.py in terminal to start the webpage
+Run `streamlit run vis.py` in terminal to start the webpage
 
-
-Diplomat Activity Database App (Map-enabled)
-===========================================
+Diplomat Activity Database App (Map + Recency Gradient)
+======================================================
 A **Streamlit** web application to browse, filter, **visualise**, and export U.S.
 State-Department diplomat activity records stored in `DIPD_SIM.xlsx`.
 
 Highlights
 -----------
-* Multi-location aware (`|` delimiter in `Location` is split automatically).
-* World map with red dots sized by event frequency.
+* Multi-location aware (`|` delimiter auto-split).
+* World map with **red→green** dots: oldest events red, newest green (linear gradient by `Event_ID`).
+* Dot radius scales with event frequency.
 * Instant CSV export of current filter.
 
 Quick start
 -----------
 ```bash
 pip install streamlit pandas openpyxl pydeck geopy
-streamlit run diplomat_app.py
+streamlit run vis.py
 ```
 """
 from __future__ import annotations
@@ -69,7 +69,7 @@ def split_locations(loc_field: str | List[str]) -> List[str]:
 st.set_page_config(page_title="Diplomat Activity DB", layout="wide")
 
 st.title("🕊️ Diplomat Activity Database")
-st.caption("Interactive explorer — multi-city trips & red map dots")
+st.caption("Interactive explorer — dots fade from red (old) to green (new)")
 
 ################################################################################
 # Load data
@@ -127,7 +127,7 @@ st.subheader(f"Results — {len(filtered):,} event(s)")
 st.dataframe(filtered, use_container_width=True, height=450)
 
 ################################################################################
-# Map visualisation
+# Map visualisation with red→green gradient
 ################################################################################
 with st.expander("🗺️ Show world map"):
     unique_places = {loc for cell in filtered["Location"] for loc in split_locations(cell)}
@@ -137,54 +137,15 @@ with st.expander("🗺️ Show world map"):
     if not coords:
         st.info("No geocodable locations.")
     else:
-        map_df = pd.DataFrame([{"place": p, "lat": lat, "lon": lon} for p, (lat, lon) in coords.items()])
-        freq = (
-            filtered["Location"].apply(split_locations).explode().value_counts().to_dict()
-        )
-        map_df["count"] = map_df["place"].map(lambda p: freq.get(p, 1))
+        # Frequency per place for radius
+        freq = filtered["Location"].apply(split_locations).explode().value_counts().to_dict()
 
-        layer = pdk.Layer(
-            "ScatterplotLayer",
-            data=map_df,
-            get_position="[lon, lat]",
-            get_radius="100000 + count * 5000",
-            get_fill_color="[255, 0, 0, 160]",  # RED dots
-            pickable=True,
-            auto_highlight=True,
-        )
-        deck = pdk.Deck(
-            layers=[layer],
-            initial_view_state=pdk.ViewState(latitude=20, longitude=0, zoom=1.3),
-            tooltip={"html": "<b>{place}</b><br/>{count} event(s)"},
-        )
-        st.pydeck_chart(deck)
-
-################################################################################
-# Download filtered CSV
-################################################################################
-if not filtered.empty:
-    st.download_button(
-        "💾 Download CSV",
-        data=filtered.to_csv(index=False).encode("utf-8"),
-        file_name="diplomat_filtered.csv",
-        mime="text/csv",
-    )
-
-################################################################################
-# Record detail viewer
-################################################################################
-with st.expander("🔬 Inspect record (Event_ID)"):
-    if "Event_ID" in df.columns:
-        min_id, max_id = int(df["Event_ID"].min()), int(df["Event_ID"].max())
-        rec_id = st.number_input("Event_ID", min_value=min_id, max_value=max_id, step=1)
-        rec = df[df["Event_ID"] == rec_id]
-        st.json(rec.to_dict(orient="records")[0]) if not rec.empty else st.info("Invalid ID.")
-    else:
-        st.warning("`Event_ID` column missing.")
-
-################################################################################
-# Footer
-################################################################################
-with st.sidebar:
-    st.markdown("---")
-    st.write("Built with Streamlit • Map via Pydeck/Mapbox • Geocoding by OSM Nominatim")
+        # Recency (max Event_ID) per place for color
+        if "Event_ID" in filtered.columns:
+            loc_id_df = (
+                filtered[["Location", "Event_ID"]]
+                .dropna(subset=["Event_ID"])
+                .assign(LocList=lambda d: d["Location"].apply(split_locations))
+                .explode("LocList")
+            )
+            recency = loc_id_df.groupby("LocList")
