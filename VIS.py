@@ -147,7 +147,7 @@ with st.expander("🗺️ Show world map"):
             "ScatterplotLayer",
             data=map_df,
             get_position="[lon, lat]",
-            get_radius="100000 + count * 50000",
+            get_radius="100000 + count * 5000",
             get_fill_color="[255, 0, 0, 160]",  # RED dots
             pickable=True,
             auto_highlight=True,
